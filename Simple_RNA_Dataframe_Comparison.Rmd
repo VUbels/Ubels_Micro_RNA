@@ -1,0 +1,142 @@
+---
+title: "RNA_GAGE_Ontology"
+author: "Victor Ubels"
+date: "2024-12-31"
+output: html_document
+---
+
+
+```{r}
+#If this is your first time running any of the Microarray_Analysis.RProj scripts re initiate the renv environment
+
+#renv::restore()
+```
+
+```{r}
+library(affy)
+library(oligo)
+library(statmod)
+library(limma)
+library(gage)
+library(pd.clariom.s.human)
+library(oligoData)
+library(affycoretools)
+library(ggplot2)
+library(gplots)
+library(RColorBrewer)
+library(openxlsx)
+library(EnhancedVolcano)
+library(org.Hs.eg.db)
+library(extrafont)
+library(extrafontdb)
+library(tidyr)
+library(dplyr)
+library(svglite)
+
+wd <- getwd()
+font_import(paths = wd, pattern = "BAHNSCHRIFT", prompt = FALSE) 
+```
+```{r}
+#Input directory for Cel files
+input_dir = "C:/Users/UVict/Documents/Microarray_Test/"
+
+#Load additional fonts for pretty plots
+loadfonts(device = "win")
+
+#Set output folder for additional results
+output_dir_standard = paste0(input_dir, "/Standard_Analysis")
+output_dir_gage = paste0(input_dir, "/GAGE_Analysis")
+dir.create(output_dir_standard)
+dir.create(output_dir_gage)
+```
+
+```{r}
+#Reads previously generated normalized data
+data <- read.xlsx(paste0(input_dir, "/normalized_intensites_filtered.xlsx"))
+```
+
+```{r}
+data$SYMBOL <- make.unique(data$SeqName)
+rownames(data) <- data$SYMBOL
+data <- data[, !colnames(data) %in% c("SeqID", "SYMBOL", "SeqName", "Seqcode")]
+
+groupA <- colnames(data)[grepl("^1A", colnames(data))]
+groupB <- colnames(data)[grepl("^2B", colnames(data))]
+
+groupA_Name <- "1A"
+groupB_Name <- "2B"
+
+print(groupA)
+print(groupB)
+
+print(dim(data))
+print(str(data))
+
+results <- list()
+
+#Runs Welch's t-test so its fine for unequal data lengths
+for(i in 1:nrow(data)) {
+  gene_expr <- data[i,]
+  groupA_expr <- as.numeric(gene_expr[groupA])
+  groupB_expr <- as.numeric(gene_expr[groupB])
+  
+  # Check for NA values
+  if(!any(is.na(groupA_expr)) && !any(is.na(groupB_expr)) && 
+     length(groupA_expr) > 1 && length(groupB_expr) > 1) {
+    logFC <- mean(groupB_expr) - mean(groupA_expr)
+    t_result <- t.test(groupB_expr, groupA_expr)
+    p_value <- t_result$p.value
+  } else {
+    logFC <- NA
+    p_value <- NA
+  }
+  
+  results[[i]] <- c(logFC = logFC, P.Value = p_value)
+}
+
+results_matrix <- do.call(rbind, results)
+
+topTable <- data.frame(
+  SYMBOL = rownames(data),
+  logFC = results_matrix[, "logFC"],
+  P.Value = results_matrix[, "P.Value"]
+)
+
+has_ggalt <- ! is(try(find.package("ggalt")), "try-error")
+
+topTable <- na.omit(topTable)
+topTable$SYMBOL <- make.unique(topTable$SYMBOL)
+#topTable$GeneName <- topTable$SYMBOL
+rownames(topTable) <- topTable$SYMBOL
+topTable <- topTable[order(abs(topTable$logFC), decreasing=TRUE), ]
+
+EVp <- EnhancedVolcano(topTable,
+  lab = topTable$SYMBOL,
+  x = 'logFC',
+  y = 'P.Value',
+  title = paste0(groupA_Name, " vs ", groupB_Name),
+  subtitle = 'Differential Gene Expression',
+  legendPosition = 'Middle',
+  pCutoff = 0.055,
+  FCcutoff = 0.8,
+  pointSize = 3.0,
+  labSize = 4.0,
+  ylim = 0.05,
+  col = c('#D0D5DC', '#60B8AA', '#006199', '#DA4948'),
+  xlim = c(-5, 5),
+  titleLabSize = 25) +
+  theme(
+    plot.title = element_text(size = 25, hjust = 0.5, family = "Bahnschrift"),
+    plot.subtitle = element_text(size = 20, hjust = 0.5, family = "Bahnschrift"),
+    axis.title = element_text(family = "Bahnschrift"),
+    axis.text = element_text(family = "Bahnschrift"),
+    legend.title = element_text(family = "Bahnschrift"),
+    legend.text = element_text(family = "Bahnschrift")
+  )
+
+EVp
+
+write.csv(topTable, (paste0(output_dir_standard, "/DifGeneExp_", groupA_Name, "_vs_", groupB_Name, ".csv")))
+
+ggsave(paste0(output_dir_standard, "/EnhancedVolcanoPlot_", groupA_Name, "_vs_", groupB_Name, ".png"), width = 7, height = 10)
+```
